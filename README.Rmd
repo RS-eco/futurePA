@@ -1,0 +1,331 @@
+---
+title: "futurePA - Future vertebrate richness changes in protected areas under climate change"
+output: github_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r opts, include = FALSE}
+knitr::opts_chunk$set(collapse = T, comment = NA, warning=F, message=F, echo=F, 
+                      fig.path="figures/", dpi=600)
+```
+
+<!--
+## MATERIAL AND METHODS
+
+Global protected area data was downloaded from protectedplanet.net in Feburary 2018.  
+
+We consider temperature, precipitation, seasonality in temperature and precipitation, elevation, isolation, and connectivity. Using bioclimatic data for current and future conditions and IUCN range maps, we model current and future global vertebrate richness (amphibians, mammals and birds) of current protected areas to assess its coverage with regard to global biodiversity.
+
+Species-specific IUCN range maps were used as response variable of the SDMs and to create current species richness maps for each of the three taxonomic groups. Bioclimatic variables derived from the meteorological forcing dataset EartH2Observe, WFDEI and ERA-Interim data Merged and Bias-corrected for ISIMIP (EWEMBI) were used as explanatory variables for the SDMs. We compare species richness of protected areas with specis richness of non-protected areas. We then create future predictions using future bioclimatic variables of 4 global climate models (GFDL-ESM2M, MIROC5, HadGEM2-ES, IPSL-CM5A-LR) and two representative concentration pathways (RCP2.6 and RCP6.0) and compare the future predictions of species richness among the protected and non-protected areas.
+
+## RESULTS
+
+As of August 2014, there are currently 209,429 designated protected areas worldwide, covering an area of 32,868,673 km2 (Deguignet et al. 2014).
+
+We obtained polygon data for 217825 (203167 terrestrial and 14658 coastal & marine) protected areas and point data for 18406 (17460 terrestrial and 946 coastal & marine) protected areas.
+-->
+
+## Maps of PAs
+
+```{r pas_1995, fig.width=10, fig.height=5}
+#' Load required libraries
+library(sf); library(raster); library(tidyverse)
+
+#' Load Github package
+library(rISIMIP)
+
+########################################
+
+# Load protected area 0.5deg data
+pas <- get(data("protectedareas_annual_1819_2018_landonly", package="rISIMIP"))
+#colnames(pas)
+rm(protectedareas_annual_1819_2018_landonly); invisible(gc())
+
+# Plot map of PAs with more than 0.5
+library(rnaturalearthhires)
+data(coastline10)
+coastline10 <- sf::st_as_sf(coastline10)
+
+pas %>% filter(`1995` >= 0.5) %>% 
+  ggplot() + geom_tile(aes(x,y,fill=`1995`)) + theme_bw() + 
+  scale_fill_gradientn(colours = rev(terrain.colors(10))) + 
+  geom_sf(data=coastline10, colour="black", fill=NA) + 
+  coord_sf() + labs(x="", y="")
+#ggsave("figures/pas_1995.png", dpi=600, width=10, height=5)
+```
+
+**Fig. 1.** Protected areas and their percentage coverage in 1995.
+
+```{r pas_2018,  fig.width=10, fig.height=5}
+pas %>% filter(`2018` >= 0.5) %>% 
+  ggplot() + geom_tile(aes(x,y,fill=`2018`)) + theme_bw() + 
+  scale_fill_gradientn(colours = rev(terrain.colors(10))) + 
+  geom_sf(data=coastline10, colour="black", fill=NA) + 
+  coord_sf() + labs(x="", y="")
+#ggsave("figures/pas_2018.png", dpi=600, width=10, height=5)
+```
+**Fig. 2.** Protected areas and their percentage coverage in 2018.
+
+```{r bio1_pas}
+########################################
+
+#' ## Environmental data
+
+#' Get bioclim files
+datafiles <- data(package="rISIMIP")
+datafiles <- as.data.frame(datafiles$results)
+climfiles <- datafiles[grep(datafiles$Item, pattern="bioclim"),]
+
+#' Read ISIMIP bioclim data as list
+climatedata <- lapply(sub('\"', '', sub('','"', climfiles$Item)), function(x) get(data(list=x, package="rISIMIP")))
+names(climatedata) <- sub('\"', '', sub('','"', climfiles$Item))
+ewembi <- climatedata[[1]]
+climatedata <- dplyr::bind_rows(climatedata[2:9], .id="id")
+rm(list=ls(pattern="bioclim")); invisible(gc())
+
+#' Add model, gcm, rcp to data
+ewembi$gcm <- "EWEMBI"
+ewembi$rcp <- ""
+ewembi$year <- 1995
+climatedata$id <- sub("bioclim_", "", sub("_landonly", "", climatedata$id))
+#unique(climatedata$id)
+library(magrittr)
+climatedata %<>% separate(id, into=c("gcm", "rcp", "year"), sep="_")
+climatedata$year <- as.numeric(climatedata$year)
+climatedata <- bind_rows(ewembi, climatedata)
+
+# Climate change of protected areas
+clim_pa <- pas %>% left_join(climatedata) %>% 
+  filter(`2018` >= 0.5) %>% select(-c(`1819`:`2018`)) %>% 
+  gather(variable, val, -c(x,y,gcm,rcp,year)) %>% 
+  group_by(x,y, variable, rcp, year) %>% 
+  summarise(val=mean(val)) %>% drop_na()
+#head(clim_pa)
+clim_pa <- filter(clim_pa, variable %in% c("bio1", "bio4", "bio5", "bio12", "bio15", "bio18"))
+clim_pa$variable <- factor(clim_pa$variable, 
+                           levels=c("bio1", "bio4", "bio5", 
+                                    "bio12", "bio15", "bio18"))
+clim_pa %>% filter(variable == "bio1") %>% 
+  ggplot() + geom_violin(aes(year, val, fill=rcp)) + 
+  facet_wrap(~ variable, scales="free", strip.position="left") + 
+  theme_bw() + theme(strip.background = element_blank(),
+                     strip.placement="outside", 
+                     legend.position="bottom") + ylab("") + 
+  scale_x_continuous(name="Year", breaks=c(1995,2080),labels=c(1995,2080)) + 
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"), 
+                    name="Scenario",
+                    breaks=c(NA, "rcp26", "rcp60"),
+                    labels=c(NA, "RCP2.6", "RCP6.0"))
+#ggsave("figures/bio1_pas.png", dpi=600, width=6, height=5)
+```
+
+**Fig. 3.** Current and future conditions of bio1 within protected areas.
+
+```{r clim_pas}
+clim_pa %>% filter(variable != "bio1") %>% 
+  ggplot() + geom_violin(aes(year, val, fill=rcp)) + 
+  facet_wrap(~ variable, scales="free", strip.position="left") + 
+  theme_bw() + theme(strip.background = element_blank(),
+                     strip.placement="outside", 
+                     legend.position=c(0.8,0.25)) + ylab("") + 
+  scale_x_continuous(name="Year", breaks=c(1995,2080),labels=c(1995,2080)) + 
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"), 
+                    name="Scenario",
+                    breaks=c(NA, "rcp26", "rcp60"),
+                    labels=c(NA, "RCP2.6", "RCP6.0"))
+#ggsave("figures/clim_pas.png", dpi=600, width=6, height=5)
+```
+
+**Fig. 4.** Current and future conditions of bio4, bio5, bio12, bio15, bio18 and bio19 within protected areas.
+
+```{r, echo=F}
+# Plot temperature against precipitation
+
+#envdata <- clim_pa %>% filter(variable %in% c("bio1", "bio12")) %>%
+#  filter(rcp %in% c("1995", "rcp26")) %>%
+#  tidyr::spread(variable, val)
+
+## Calculate minimum convex polygon of climatic niche
+# With percent=100, same result as chull function!
+
+# Remove outliers
+#library(outliers)
+#envdata %<>% ungroup %>% select(year,bio1,bio12)
+#envdata <- rm.outlier(envdata, fill=T)
+
+#sp::coordinates(envdata) <- ~bio12+bio1
+#mcp1 <- adehabitatHR::mcp(envdata[envdata$year == 1995,], percent=99)
+#mcp2 <- adehabitatHR::mcp(envdata[envdata$year == 2080,], percent=99)
+#envdata <- data.frame(envdata)
+#ggplot() + geom_point(envdata[envdata$year == 1995,], aes(x=bio12,y=bio1), 
+#                      fill=NA, colour="black",alpha=0.1) + 
+#  geom_point(envdata[envdata$year == 2080,], aes(x=bio12,y=bio1), 
+#             fill=NA, colour="red", alpha=0.1) + 
+#  geom_polygon(mcp1, aes(x=long, y=lat), colour="black", alpha=0.05, fill=NA) +
+#  geom_polygon(mcp2, aes(x=long, y=lat), colour="red", alpha=0.05, fill=NA) + 
+#  theme_bw() + labs(x="", y="")
+```
+
+```{r sr_pa}
+########################################
+
+# Species Data
+
+sr_1995 <- read.csv("data/sr_predicted_ssdm_1995_disp1.csv.xz")
+sr_2080 <- read.csv("data/sr_predicted_ssdm_disp1_2080.csv.xz")
+sr <- full_join(sr_1995, sr_2080) %>% 
+  gather(var, value, -c(x,y, model,group))
+sr$var <- gsub("[.]", "-", sr$var)
+sr %<>% separate(var, into=c("gcm", "rcp", "year"), sep="_")
+sr$year[sr$rcp == "1995"] <- 1995
+rm(sr_1995, sr_2080)
+
+########################################
+
+# Combine datasets
+
+climatedata$year <- as.numeric(climatedata$year)
+sr$year <- as.numeric(sr$year)
+data <- left_join(sr, climatedata)
+data <- pas %>% select(x,y,"1995", "2018") %>% left_join(data)
+rm(climatedata, pas, sr)
+
+########################################
+
+# Species richness change of protected areas
+
+sr_pa <- data %>% filter(2018 >= 0.5) %>% 
+  select(x,y,model,group,gcm,rcp,year,value) %>% 
+  group_by(x,y, group, rcp, year) %>% 
+  summarise(val=mean(value)) %>% drop_na()
+#head(sr_pa)
+
+sr_pa$group <- factor(sr_pa$group, labels=c("Amphibians", "Birds", "Mammals"))
+sr_pa %>% ggplot() + geom_violin(aes(year, val, fill=rcp)) + 
+  facet_wrap(~ group, scales="free") + ylab("Species richness") + theme_bw() + 
+  theme(strip.background = element_blank()) + 
+  scale_x_continuous(name="Year", breaks=c(1995,2080), labels=c(1995,2080)) + 
+  #scale_y_continuous(limits=c(0,NA), expand=c(0,0)) + 
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"), 
+                    name="Scenario",
+                    breaks=c(NA, "rcp26", "rcp60"),
+                    labels=c(NA, "RCP2.6", "RCP6.0"))
+#ggsave("figures/sr_pas.png", dpi=600, width=8, height=4)
+```
+
+**Fig. 5.** Current (1995) and future (2080) species richness of amphibians, birds and mammals within protected areas.
+
+```{r delta_sr_pas_country, fig.width=10, fig.height=8}
+##############################
+
+# Identify the number of species protected by PAs for each country
+
+countries <- readr::read_csv("data/countries_05deg.csv.xz")
+
+library(magrittr)
+sr_coun <- sr_pa %>% left_join(countries)
+sr_sub <- sr_coun[sr_coun$rcp == 1995,]
+sr_sub$rcp[sr_sub$rcp == 1995] <- "rcp26"
+sr_coun$rcp[sr_sub$rcp == 1995] <- "rcp60"
+sr_coun %>% bind_rows(sr_sub) %>%
+  group_by(x,y,year,rcp, NAME) %>%
+  summarise(sum=sum(val)) %>% tidyr::spread(year, sum) %>%
+  mutate(val=`2080`-`1995`) %>%
+  ggplot() + 
+  geom_boxplot(aes(as.factor(NAME), val, fill=rcp),
+               position = position_dodge2(preserve = "single")) + 
+  labs(x="Country", y="Change in SR") + coord_flip() + 
+  theme_bw() + theme(strip.background = element_blank()) + 
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"), 
+                    name="Scenario",
+                    breaks=c(NA, "rcp26", "rcp60"),
+                    labels=c(NA, "RCP2.6", "RCP6.0"))
+#ggsave("figures/delta_sr_pas_country.png", dpi=600, width=5, height=10)
+```
+
+**Fig. 6.** Change in total species richness (2080-1995) within protected areas for each country.
+
+```{r delta_sr_pas_continents}
+##############################
+
+# Identify the number of species protected by PAs for each continent
+
+continents <- readr::read_csv("data/continents_05deg.csv.xz")
+
+library(magrittr)
+sr_con <- sr_pa %>% left_join(continents)
+sr_sub <- sr_con[sr_con$rcp == 1995,]
+sr_sub$rcp[sr_sub$rcp == 1995] <- "rcp26"
+sr_con$rcp[sr_con$rcp == 1995] <- "rcp60"
+sr_con %>% bind_rows(sr_sub) %>%
+  group_by(x,y,year,rcp, continent) %>%
+  summarise(sum=sum(val)) %>% tidyr::spread(year, sum) %>%
+  mutate(val=`2080`-`1995`) %>%
+  ggplot() + 
+  geom_violin(aes(as.factor(continent), val, fill=rcp)) + 
+  labs(x="Continent", y="Change in SR") + coord_flip() + 
+  theme_bw() + theme(strip.background = element_blank()) + 
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"), 
+                    name="Scenario",
+                    breaks=c(NA, "rcp26", "rcp60"),
+                    labels=c(NA, "RCP2.6", "RCP6.0"))
+```
+
+**Fig. 7.** Change in total species richness (2080-1995) within protected areas of each continent.
+
+```{r delta_sr_pas_realms}
+##############################
+
+# Identify the number of species protected by PAs for each continent
+
+realms <- readr::read_csv("data/realms_05deg.csv.xz")
+
+library(magrittr)
+sr_realm <- sr_pa %>% left_join(realms)
+sr_sub <- sr_realm[sr_realm$rcp == 1995,]
+sr_sub$rcp[sr_sub$rcp == 1995] <- "rcp26"
+sr_realm$rcp[sr_realm$rcp == 1995] <- "rcp60"
+sr_realm %>% bind_rows(sr_sub) %>%
+  group_by(x,y,year,rcp, realm) %>%
+  summarise(sum=sum(val)) %>% tidyr::spread(year, sum) %>%
+  mutate(val=`2080`-`1995`) %>%
+  ggplot() + 
+  geom_violin(aes(as.factor(realm), val, fill=rcp)) + 
+  labs(x="Realm", y="Change in SR") + coord_flip() + 
+  theme_bw() + theme(strip.background = element_blank()) + 
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"), 
+                    name="Scenario",
+                    breaks=c(NA, "rcp26", "rcp60"),
+                    labels=c(NA, "RCP2.6", "RCP6.0"))
+```
+
+**Fig. 8.** Change in total species richness (2080-1995) within protected areas of each realm.
+
+```{r delta_sr_pas_biomes}
+##############################
+
+# Identify the number of species protected by PAs for each continent
+
+biomes <- readr::read_csv("data/biomes_05deg.csv.xz")
+
+library(magrittr)
+sr_bio <- sr_pa %>% left_join(biomes)
+sr_sub <- sr_bio[sr_bio$rcp == 1995,]
+sr_sub$rcp[sr_sub$rcp == 1995] <- "rcp26"
+sr_bio$rcp[sr_bio$rcp == 1995] <- "rcp60"
+sr_bio %>% bind_rows(sr_sub) %>%
+  group_by(x,y,year,rcp, biome) %>%
+  summarise(sum=sum(val)) %>% tidyr::spread(year, sum) %>%
+  mutate(val=`2080`-`1995`) %>%
+  ggplot() + 
+  geom_violin(aes(as.factor(biome), val, fill=rcp)) + 
+  labs(x="Realm", y="Change in SR") + coord_flip() + 
+  theme_bw() + theme(strip.background = element_blank()) + 
+  scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"), 
+                    name="Scenario",
+                    breaks=c(NA, "rcp26", "rcp60"),
+                    labels=c(NA, "RCP2.6", "RCP6.0"))
+```
+
+**Fig. 9.** Change in total species richness (2080-1995) within protected areas of each biome.
